@@ -1,0 +1,4 @@
+elliptic_curve:
+  SECP256K1
+key_path:
+  ./private.key
