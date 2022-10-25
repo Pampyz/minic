@@ -1,55 +1,12 @@
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
+from blockchain import BlockState, BlockStorage, Block, Transaction, Input, Output, get_transaction_hash
 import argparse
 import yaml
 import os
 
-# Blockchain primitives
-
-class Broadcaster:
-    def __init__(self):
-        self.peers = []
-
-class BlockState:
-    def __init__(self):
-        self.block_height = 0
-        self.current_reward = 5000000000
-    
-    def create_mining_transaction(self, pk):
-        tx = Transaction()
-        tx.output_value = self.current_reward
-
-    def create_transaction(self, pk):
-        pass
-
-class Transaction:
-    def __init__(self):
-        #in-counter
-        self.inputs = []
-        #out-counter
-        self.outputs = []
-        #witnesses
-        self.lock_time = 4
-
-    def __serialize__(self):
-        pass
-
-class Block:
-    def __init__(self):
-        self.txs = []
-
-    def __serialize__(self):
-        pass
-
-
-def create_transaction():
-    pass
-
-def validate_transaction():
-    pass
 
 # Arguments & configs
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--status", help='Print the status of the application')
@@ -66,7 +23,6 @@ def parse_config(config_path):
             quit()
 
 # Key generation & handling
-
 def generate_key(config):
     pk = ec.generate_private_key(
         eval('ec.%s()' % config['elliptic_curve'])
@@ -110,7 +66,6 @@ def check_key(config):
             quit()
 
 # Main entry point
-
 def main():
     print('Welcome to MINIC - a minimal bitcoin-like cryptocurrency application')
     
@@ -118,9 +73,25 @@ def main():
     config = parse_config(args.config_path)
     pk = check_key(config)
 
+    node = BlockState(pk, config)
+    
 
-    node = BlockState()
-    tx = node.create_mining_transaction(pk)
+    mining_tx = node.create_mining_transaction()
+    storage = BlockStorage(config)
+    storage.store_transaction(mining_tx)
+
+    for i in range(1, 50):
+        mining_tx = node.create_mining_transaction(i.to_bytes(4, byteorder='big'))
+        storage.store_transaction(mining_tx)
+    storage.list_transactions()
+
+    print('Serializing test-output and test-inputs...')
+    test_output = Output(5000000000, b'script goes here')
+    print(test_output.__serialize__())
+
+    test_input = Input(b'doiwmidmw', 3, b'scriptSIG').__serialize__()
+    print(test_input)
+    
 
 
 if __name__=='__main__':

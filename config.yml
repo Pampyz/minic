@@ -1,4 +1,11 @@
 elliptic_curve:
   SECP256K1
+data_path:
+  ./data/store.index
 key_path:
   ./private.key
+pub-address-map:
+  - SHA256
+  - SHA3_224
+tx-hash:
+  - SHA256
