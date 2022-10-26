@@ -11,10 +11,10 @@ class Input:
     def set_script_sig(self, script_sig):
         self.script_sig = script_sig
 
-    def __serialize__(self):
+    def __serialize__(self, skip_script=False):
         s = self.prev_hash
         s += self.prev_index.to_bytes(4, byteorder='big')
-        if self.script_sig is not None:
+        if not skip_script:
             s += bytes(self.script_sig)
         return s
 
@@ -43,20 +43,20 @@ class Transaction:
         for inp in self.inputs:
             inp.set_script_sig(script_sig)
             
-    def __hash__(self, tx_hash=['SHA256']):
-        hash = self.__serialize__()
+    def __hash__(self, tx_hash=['SHA256'], skip_scripts=False):
+        hash = self.__serialize__(skip_scripts)
         for h in tx_hash:
             digest = eval('hashes.Hash(hashes.%s())' % h)
             digest.update(hash)
             hash = digest.finalize()
         return hash
 
-    def __serialize__(self):
+    def __serialize__(self, skip_scripts=False):
         s = b''
         
         s += len(self.inputs).to_bytes(4, byteorder='big') # Should actually be VarINT
         for input in self.inputs:
-            s += input.__serialize__()
+            s += input.__serialize__(skip_script=skip_scripts)
         
         s += len(self.outputs).to_bytes(4, byteorder='big') # Should actually be VarINT
         for output in self.outputs:
@@ -67,6 +67,9 @@ class Transaction:
 class Block:
     def __init__(self):
         self.txs = []
+
+    def add_transaction(self, tx):
+        self.txs.append(tx)
 
     def __serialize__(self):
         pass
@@ -141,10 +144,24 @@ class BlockState:
         return tx
 
     def get_script_sig(self, tx):
-        return self.pk.sign(
-            tx.__hash__(), 
+        ''' This is a simplified version of the bitcoin scriptsig - called pay-to-pubkey-hash.
+            It consists of a signature of the serialized transaction without scriptsigs, concatenated
+            with a byte-representation of the public key of the signer. '''
+
+        sig = self.pk.sign(
+            tx.__hash__(skip_scripts=True), 
             ec.ECDSA(hashes.SHA256())
-        ) + self.address
+        ) # DER-encoding seems to have variable length - see https://stackoverflow.com/questions/17269238/ecdsa-signature-length
+    
+        print(sig)
+        pub_key = self.pk.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo # Change encoding & format for more crisp transactions
+        )
+
+        print('Sig & pubkey lengths: ')
+        print(len(sig), len(pub_key))
+        return sig + pub_key
 
     ''' Fee is included in value! '''
     def create_transaction(self, value, receiver, mode='fill'):
@@ -183,8 +200,46 @@ class BlockState:
         
         return tx
 
-    def verify_transaction(self):
-        pass
+    def validate_value(self, tx, storage):
+        total_value = 0
+        for x in tx.inputs:
+            referred_value = storage.hashmap[x.prev_hash].outputs[x.prev_index].value
+            total_value += referred_value
+
+        assert total_value > sum([x.value for x in tx.outputs])    
+        fee = total_value - sum([x.value for x in tx.outputs])
+        print(fee)
+        return
+
+    def validate_inputs(self, tx, storage):
+        ''' Validates signatures & addresses '''
+        for x in tx.inputs:
+            pub_key = x.script_sig[-174:]
+            signature = x.script_sig[:-174]
+
+            # Perform given pub-address-map as given in config (default is SHA3-224(SHA-256))
+            address = pub_key
+            for h in self.config['pub-address-map']:
+                digest = eval('hashes.Hash(hashes.%s())' % h)
+                digest.update(address)
+                address = digest.finalize()
+        
+
+            pub_key = serialization.load_pem_public_key(pub_key)
+            pub_key.verify(signature, tx.__hash__(skip_scripts=True), ec.ECDSA(hashes.SHA256()))
+
+            address_ = storage.hashmap[x.prev_hash].outputs[x.prev_index].script
+            assert address == address_
+
+    def validate_transaction(self, tx, storage):
+        # Assert that the tx:s can be found among validated blocks & given values are true
+        self.validate_value(tx, storage)
+
+        # Check signatures
+        self.validate_inputs(tx, storage)
+
+        return
+
 
     ##### Unsure about below stuff. #######
     def mine():

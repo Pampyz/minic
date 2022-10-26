@@ -98,13 +98,9 @@ def main():
     print([x for x in tx.outputs])
     print(tx.__hash__())
 
-    print('Serializing test-output and test-inputs...')
-    test_output = Output(5000000000, b'script goes here')
-    print(test_output.__serialize__())
-
-    test_input = Input(b'doiwmidmw', 3, b'scriptSIG').__serialize__()
-    print(test_input)
+    node.validate_transaction(tx, storage)
     
+
 
 
 if __name__=='__main__':
