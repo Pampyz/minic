@@ -1,6 +1,6 @@
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
-from blockchain import BlockState, BlockStorage, Block, Transaction, Input, Output, get_transaction_hash
+from blockchain import BlockState, BlockStorage, Block, Transaction, Input, Output
 import argparse
 import yaml
 import os
@@ -67,7 +67,11 @@ def check_key(config):
 
 # Main entry point
 def main():
-    print('Welcome to MINIC - a minimal bitcoin-like cryptocurrency application')
+
+    print('-------------------------------------------------------------------- \n'+
+            'Welcome to MINIC - a minimal bitcoin-like cryptocurrency application\n' + 
+        '--------------------------------------------------------------------\n'
+    )
     
     args = parse_args()
     config = parse_config(args.config_path)
@@ -76,14 +80,23 @@ def main():
     node = BlockState(pk, config)
     
 
-    mining_tx = node.create_mining_transaction()
+    mining_tx = node.create_coinbase_transaction()
     storage = BlockStorage(config)
     storage.store_transaction(mining_tx)
 
     for i in range(1, 50):
-        mining_tx = node.create_mining_transaction(i.to_bytes(4, byteorder='big'))
+        mining_tx = node.create_coinbase_transaction(i.to_bytes(4, byteorder='big'))
         storage.store_transaction(mining_tx)
+        node.add_utxo(mining_tx.__hash__(), 0, mining_tx.outputs[0].value)
+
     storage.list_transactions()
+    for x in node.utxos:
+        print(x)
+
+    tx = node.create_transaction(25000000000, node.address)
+    print([x for x in tx.inputs])
+    print([x for x in tx.outputs])
+    print(tx.__hash__())
 
     print('Serializing test-output and test-inputs...')
     test_output = Output(5000000000, b'script goes here')

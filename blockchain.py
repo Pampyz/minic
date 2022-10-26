@@ -1,13 +1,6 @@
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
-
-def get_transaction_hash(tx, config):
-    hash = tx.__serialize__()
-    for h in config['tx-hash']:
-        digest = eval('hashes.Hash(hashes.%s())' % h)
-        digest.update(hash)
-        hash = digest.finalize()
-    return hash
+from cryptography.hazmat.primitives.asymmetric import ec
 
 class Input:
     def __init__(self, prev_hash, prev_index, script_sig):
@@ -15,10 +8,14 @@ class Input:
         self.prev_index = prev_index
         self.script_sig = script_sig
 
+    def set_script_sig(self, script_sig):
+        self.script_sig = script_sig
+
     def __serialize__(self):
         s = self.prev_hash
         s += self.prev_index.to_bytes(4, byteorder='big')
-        s += bytes(self.script_sig)
+        if self.script_sig is not None:
+            s += bytes(self.script_sig)
         return s
 
 class Output:
@@ -41,6 +38,18 @@ class Transaction:
 
     def add_output(self, output):
         self.outputs.append(output)
+
+    def add_script_sigs(self, script_sig):
+        for inp in self.inputs:
+            inp.set_script_sig(script_sig)
+            
+    def __hash__(self, tx_hash=['SHA256']):
+        hash = self.__serialize__()
+        for h in tx_hash:
+            digest = eval('hashes.Hash(hashes.%s())' % h)
+            digest.update(hash)
+            hash = digest.finalize()
+        return hash
 
     def __serialize__(self):
         s = b''
@@ -68,7 +77,7 @@ class BlockStorage:
         self.hashmap = {}
     
     def store_transaction(self, tx):
-        self.hashmap[get_transaction_hash(tx, self.config)] = tx
+        self.hashmap[tx.__hash__(self.config['tx-hash'])] = tx
 
     def list_transactions(self):
         for k, v in self.hashmap.items():
@@ -107,11 +116,11 @@ class BlockState:
             address = digest.finalize()
         return address
 
-    def create_generation_output(self):
+    def create_coinbase_output(self):
         script = self.address
         return Output(self.current_reward, script)
 
-    def create_generation_input(self, nonce):
+    def create_coinbase_input(self, nonce):
         # Set the nonce to generate unique input transactions for testing purposes
         if nonce is None:
             dummy_hash = b''
@@ -125,14 +134,17 @@ class BlockState:
 
         return Input(dummy_hash, 0, b'The Times 03/Jan/2009 Chancellor on brink of second bailout for banks')
 
-    def create_mining_transaction(self, nonce=None):
+    def create_coinbase_transaction(self, nonce=None):
         tx = Transaction()
-        tx.add_input(self.create_generation_input(nonce))
-        tx.add_output(self.create_generation_output())
+        tx.add_input(self.create_coinbase_input(nonce))
+        tx.add_output(self.create_coinbase_output())
         return tx
 
-    def get_script_sig(self):
-        pass
+    def get_script_sig(self, tx):
+        return self.pk.sign(
+            tx.__hash__(), 
+            ec.ECDSA(hashes.SHA256())
+        ) + self.address
 
     ''' Fee is included in value! '''
     def create_transaction(self, value, receiver, mode='fill'):
@@ -141,15 +153,14 @@ class BlockState:
         # Start by constructing inputs made from available UTXO
         if mode == 'fill':
             value_ = 0
-            sorted_utxos = self.utxos.sorted(by=lambda x: x['value'])
+            sorted_utxos = sorted(self.utxos, key=lambda x: x['value'])
             
             loop_broken = False
             for i in range(0, len(sorted_utxos)):
                 utxo = sorted_utxos[i]
 
                 value_ += utxo['value'] 
-                script_sig = self.get_script_sig()
-                tx.add_input(Input(utxo['prev_hash'], utxo['prev_index'], script_sig))
+                tx.add_input(Input(utxo['prev_hash'], utxo['prev_index'], None))
 
                 if value_ > value:
                     loop_broken = True
@@ -165,7 +176,11 @@ class BlockState:
         # Create output to receiver address, send change to own address
         tx.add_output(Output(value-self.fee, receiver))
         tx.add_output(Output(value_-value, self.address))
-
+        
+        # Finally add signatures to inputs
+        script_sig = self.get_script_sig(tx)
+        tx.add_script_sigs(script_sig)
+        
         return tx
 
     def verify_transaction(self):
