@@ -1,7 +1,7 @@
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives import hashes
-from blockchain import BlockState, BlockStorage, Block, BlockHeader, Transaction, Input, Output
+from blockchain import BlockState, BlockStorage, DataContext, Block, BlockHeader, Transaction, Input, Output
 import argparse
 import yaml
 import os
@@ -78,29 +78,6 @@ def hash(x, mode=None):
             x = sha.finalize()
     return x
 
-# Test & debug code
-def create_genesis_header(config, merkle_root):
-    genesis_header_reference = hash(b'', ['SHA256', 'SHA256']) 
-    target = '00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF' # 64, original has 8 leading zeroes
-
-    genesis_header = BlockHeader(version = b'0.0.5', previous_block = genesis_header_reference, merkle_root = merkle_root, \
-                                time = int(time.time()), bits = int(target, 16)) 
-    return genesis_header
-
-def create_genesis_block(pk, config):
-    node = BlockState(pk, config)
-
-    # Create initial transaction
-    txs = [node.create_coinbase_transaction()]
-    genesis_block = Block(txs)
-
-    genesis_header = create_genesis_header(config, genesis_block.get_merkle_root())
-    genesis_block.header = genesis_header
-    
-    pow = genesis_block.create_pow()
-    genesis_block.header.nonce = pow
-    return genesis_block
-
 # Main entry point
 def main():
 
@@ -120,7 +97,7 @@ def main():
     storage.store_transaction(mining_tx)
 
     for i in range(1, 50):
-        mining_tx = node.create_coinbase_transaction(i.to_bytes(4, byteorder='big'))
+        mining_tx = node.create_coinbase_transaction()
         storage.store_transaction(mining_tx)
         node.add_utxo(mining_tx.__hash__(), 0, mining_tx.outputs[0].value)
 
@@ -135,7 +112,18 @@ def main():
 
     node.validate_transaction(tx, storage)
 
-    genesis_block = create_genesis_block(pk, config)
+
+    # Routines for Genesis block
+    storage = DataContext(config)
+    genesis_block = node.create_genesis_block()
+    genesis_block.cleartext_dump()
+    
+    storage.store_block(genesis_block, index=1)
+    block = storage.load_block(1)
+    
+    
+    print(block)
+
     node.validate_block(genesis_block, storage)
 
 if __name__=='__main__':
