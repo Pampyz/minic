@@ -1,10 +1,11 @@
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
-from blockchain import BlockState, BlockStorage, Block, Transaction, Input, Output
+from cryptography.hazmat.primitives import hashes
+from blockchain import BlockState, BlockStorage, Block, BlockHeader, Transaction, Input, Output
 import argparse
 import yaml
 import os
-
+import time
 
 # Arguments & configs
 def parse_args():
@@ -65,6 +66,41 @@ def check_key(config):
             print('Password mismatch! Please try again!')
             quit()
 
+def hash(x, mode=None):
+    if mode is None:
+        sha = hashes.Hash(hashes.SHA256())
+        sha.update(x)
+        x = sha.finalize()
+    else:
+        for z in mode:
+            sha = eval('hashes.Hash(hashes.%s())' % z)
+            sha.update(x)
+            x = sha.finalize()
+    return x
+
+# Test & debug code
+def create_genesis_header(config, merkle_root):
+    genesis_header_reference = hash(b'', ['SHA256', 'SHA256']) 
+    target = '00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF' # 64, original has 8 leading zeroes
+
+    genesis_header = BlockHeader(version = b'0.0.5', previous_block = genesis_header_reference, merkle_root = merkle_root, \
+                                time = int(time.time()), bits = int(target, 16)) 
+    return genesis_header
+
+def create_genesis_block(pk, config):
+    node = BlockState(pk, config)
+
+    # Create initial transaction
+    txs = [node.create_coinbase_transaction()]
+    genesis_block = Block(txs)
+
+    genesis_header = create_genesis_header(config, genesis_block.get_merkle_root())
+    genesis_block.header = genesis_header
+    
+    pow = genesis_block.create_pow()
+    genesis_block.header.nonce = pow
+    return genesis_block
+
 # Main entry point
 def main():
 
@@ -79,7 +115,6 @@ def main():
 
     node = BlockState(pk, config)
     
-
     mining_tx = node.create_coinbase_transaction()
     storage = BlockStorage(config)
     storage.store_transaction(mining_tx)
@@ -99,9 +134,9 @@ def main():
     print(tx.__hash__())
 
     node.validate_transaction(tx, storage)
-    
 
-
+    genesis_block = create_genesis_block(pk, config)
+    node.validate_block(genesis_block, storage)
 
 if __name__=='__main__':
     main()

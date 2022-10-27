@@ -1,6 +1,9 @@
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+import os
+
+#def hash(digest, config)
 
 class Input:
     def __init__(self, prev_hash, prev_index, script_sig):
@@ -64,14 +67,108 @@ class Transaction:
         
         return s
 
+class BlockHeader:
+    def __init__(self, version, previous_block, merkle_root, time, bits, nonce=None):
+        self.version = version # 6 bytes
+        self.previous_block = previous_block # Hash
+        self.merkle_root = merkle_root # Hash
+        self.time = time # 4 bytes
+        self.bits = bits # 4 bytes
+        if nonce is None: # 4 bytes
+            self.nonce = 0 
+        else:
+            self.nonce = nonce
+
+    def __serialize__(self):
+        t = self.time.to_bytes(4, byteorder='big')
+        bits = self.bits.to_bytes(32, byteorder='big')
+        nonce = self.nonce.to_bytes(4, byteorder='big')
+
+        return self.version + self.previous_block + self.merkle_root + t + bits + nonce
+
+    def __hash__(self):
+        hash = self.__serialize__()
+        for i in range(0, 2):
+            sha = hashes.Hash(hashes.SHA256())
+            sha.update(hash)
+            hash = sha.finalize()    
+        return hash
+
+
 class Block:
-    def __init__(self):
-        self.txs = []
+    def __init__(self, txs = []):
+        self.header = []
+        self.txs = txs
 
     def add_transaction(self, tx):
         self.txs.append(tx)
 
+    def get_merkle_root(self, txs=None):
+        if txs is None:
+            txs = self.txs
+
+        nbr_of_txs = len(txs) 
+        if nbr_of_txs == 1:
+            return txs[0].__hash__()
+        else:
+            tx1 = txs[0:int(round(nbr_of_txs/2))]
+            tx2 = txs[int(round(nbr_of_txs/2)):]
+            hash = self.get_merkle_root(tx1) + self.get_merkle_root(tx2)
+            sha = hashes.Hash(hashes.SHA256()) ### Might add config functionality here???
+            sha.update(hash)
+            return sha.finalize()
+
+    def create_pow(self):
+        condition = False
+        nonce = 1
+        while not condition:
+            self.header.nonce = nonce
+            hash = self.header.__hash__()
+            
+            hash = int.from_bytes(hash, 'little')
+            print(self.header.bits)
+            print(hash)
+            
+            print(nonce)
+
+            if hash < self.header.bits:
+                condition = True
+
+            else:
+                nonce += 1
+
+        return nonce
+
+    def __hash__(self):
+        hash = self.__serialize__()
+        for i in range(0, 2):
+            sha = hashes.Hash(hashes.SHA256())
+            sha.update(hash)
+            hash = sha.finalize()    
+        return hash
+
     def __serialize__(self):
+        ser = self.header.__serialize__()
+        for x in self.txs:
+            ser += x.__serialize__()
+        return ser
+
+    @staticmethod
+    def deserialize(arr):
+        print(arr)
+
+class DataContext:
+    def __init__(self, config):
+        self.data_path = config['data_path']
+        if not os.path.isdir(self.data_path):
+            os.mkdir(self.data_path)
+
+        # self.block_height
+
+    def store_block(self, block):
+        pass
+
+    def reindex_chain(self, block):
         pass
 
 class BlockStorage:
@@ -123,7 +220,7 @@ class BlockState:
         script = self.address
         return Output(self.current_reward, script)
 
-    def create_coinbase_input(self, nonce):
+    def create_coinbase_input(self, nonce=None):
         # Set the nonce to generate unique input transactions for testing purposes
         if nonce is None:
             dummy_hash = b''
@@ -237,12 +334,11 @@ class BlockState:
 
         # Check signatures
         self.validate_inputs(tx, storage)
-
         return
 
-
-    ##### Unsure about below stuff. #######
-    def mine():
+    def validate_block(self, block, storage):
+        
         pass
+
 
     
