@@ -1,6 +1,7 @@
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 import os
 import time
 
@@ -46,6 +47,9 @@ class Output:
         self.value = value
         self.script = script
 
+    def set_script(self, script):
+        self.script = script
+
     def serialize(self):
         s = self.value.to_bytes(8, byteorder='big')
         s += bytes(self.script) # Size
@@ -62,11 +66,11 @@ class Transaction:
         self.inputs = []
         self.outputs = []
 
-    def add_input(self, input):
-        self.inputs.append(input)
+    def add_input(self, i):
+        self.inputs.append(i)
 
-    def add_output(self, output):
-        self.outputs.append(output)
+    def add_output(self, o):
+        self.outputs.append(o)
 
     def add_script_sigs(self, script_sig):
         for input in self.inputs:
@@ -92,8 +96,47 @@ class Transaction:
         return s
 
     @staticmethod
-    def deserialize(transactions):
-        pass
+    def deserialize_transactions(arr):
+        counter = Counter()
+
+        n_transactions = int.from_bytes(counter.extract(arr, 4), 'big')
+        print('Number of transactions in deserialized block: ', n_transactions)
+
+        txs = []
+        while n_transactions > 0:
+            tx = Transaction()
+            n_inputs = int.from_bytes(counter.extract(arr, 4), 'big')
+            print('Number of inputs: ', n_inputs)
+
+            inputs = []
+            while n_inputs > 0:
+                prev_hash = counter.extract(arr, 32)
+                prev_index = counter.extract(arr, 4)
+
+                script_length_bytes = counter.extract(arr, 4)
+                script_length = int.from_bytes(script_length_bytes, byteorder='big')
+                
+                script_sig = script_length_bytes + counter.extract(arr, script_length)
+                
+                inputs.append(Input(prev_hash, prev_index, script_sig))
+                n_inputs -= 1
+
+            n_outputs = int.from_bytes(counter.extract(arr, 4), 'big')
+            print('Number of outputs: ', n_inputs)
+
+            outputs = []
+            while n_outputs > 0:
+                value = int.from_bytes(counter.extract(arr, 8), byteorder='big')
+                script = counter.extract(arr, 28)
+                outputs.append(Output(value, script))
+                n_outputs -= 1
+
+            n_transactions -= 1
+
+            tx.inputs = inputs
+            tx.outputs = outputs
+            txs.append(tx)
+        return txs
 
 class BlockHeader:
     def __init__(self, version, previous_block, merkle_root, time, bits, nonce=None):
@@ -161,7 +204,6 @@ class Block:
 
             else:
                 nonce += 1
-
         return nonce
 
     def cleartext_dump(self):
@@ -184,24 +226,10 @@ class Block:
 
     def serialize(self):
         ser = self.header.serialize()
+        ser += len(self.txs).to_bytes(4, byteorder='big')
         for x in self.txs:
             ser += x.serialize()
         return ser
-
-    @staticmethod
-    def deserialize_transactions(arr):
-        n_transactions = int.from_bytes(arr[0:4], 'big')
-        print('Number of transactions in deserialized block: ', n_transactions)
-        
-        txs = []
-        while n_transactions > 0:
-            tx = Transaction()
-            n_inputs = int.from_bytes(arr[4:8], 'big')
-            print('Number of inputs: ', n_inputs)
-
-            n_transactions -= 1
-
-            txs.append(Transaction())
 
     @staticmethod
     def deserialize_header(arr):
@@ -221,14 +249,29 @@ class Block:
         block = Block()
         
         block.header = Block.deserialize_header(arr)
-        block.cleartext_dump()
-
-        print(len(arr))
-        block.txs = Block.deserialize_transactions(arr[109:]) # Transaction.deserialize_transactions()?
-
+        block.txs = Transaction.deserialize_transactions(arr[109:]) 
+        return block
         # Validate merkle root, hash < difficulty, validate difficulty with blockstate 
 
+class Counter():
+    def __init__(self, start=0, end=0):
+        self.start = start
+        self.end = end
+
+    def increment(self, offset):
+        self.start = self.end
+        self.end += offset
+
+    def extract(self, arr, offset):
+        self.increment(offset)
+        return arr[self.start:self.end]
+
 class DataContext:
+
+    # To cache: find transaction from a given hash
+    # Find all utxo corresponding to an address
+    # Find blocks by reference
+    
     def __init__(self, config):
         self.data_path = config['data_path']
         self.block_store = os.path.join(self.data_path, 'blocks')
@@ -318,10 +361,14 @@ class BlockState:
         return Input(dummy_hash, 0, b'The Times 03/Jan/2009 Chancellor on brink of second bailout for banks')
 
     def create_coinbase_transaction(self):
-        tx = Transaction()
-        tx.add_input(self.create_coinbase_input())
-        tx.add_output(self.create_coinbase_output())
-        return tx
+        transaction = Transaction()
+        print(len(transaction.inputs), len(transaction.outputs))
+        transaction.add_input(self.create_coinbase_input())
+        transaction.add_output(self.create_coinbase_output())
+        
+        print('Coinbase inputs and outputs')
+        print(len(transaction.inputs), len(transaction.outputs))
+        return transaction
 
     # Test & debug code
     def create_genesis_header(self, merkle_root):
@@ -354,8 +401,9 @@ class BlockState:
             tx.__hash__(skip_scripts=True), 
             ec.ECDSA(hashes.SHA256())
         ) # DER-encoding seems to have variable length - see https://stackoverflow.com/questions/17269238/ecdsa-signature-length
-    
-        print(sig)
+        
+        sig_length = len(sig).to_bytes(4, byteorder='big')
+
         pub_key = self.pk.public_key().public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo # Change encoding & format for more crisp transactions
@@ -363,7 +411,7 @@ class BlockState:
 
         print('Sig & pubkey lengths: ')
         print(len(sig), len(pub_key))
-        return sig + pub_key
+        return sig_length + sig + pub_key
 
     ''' Fee is included in value! '''
     def create_transaction(self, value, receiver, mode='fill'):
@@ -416,8 +464,9 @@ class BlockState:
     def validate_inputs(self, tx, storage):
         ''' Validates signatures & addresses '''
         for x in tx.inputs:
-            pub_key = x.script_sig[-174:]
-            signature = x.script_sig[:-174]
+            sig_length = int.from_bytes(x.script_sig[0:4], 'big')
+            signature = x.script_sig[4:4+sig_length]
+            pub_key = x.script_sig[(4 + sig_length) : (4 + sig_length + 174)]
 
             # Perform given pub-address-map as given in config (default is SHA3-224(SHA-256))
             address = pub_key
