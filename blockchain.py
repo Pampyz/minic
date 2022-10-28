@@ -296,19 +296,6 @@ class DataContext:
 
     def index_chain(self):
         pass
-
-# Temporary class for tests. To be removed
-class BlockStorage:
-    def __init__(self, config):
-        self.config = config
-        self.hashmap = {}
-    
-    def store_transaction(self, tx):
-        self.hashmap[tx.__hash__(self.config['tx-hash'])] = tx
-
-    def list_transactions(self):
-        for k, v in self.hashmap.items():
-            print(k, v)
     
 
 class BlockState:
