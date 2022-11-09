@@ -135,7 +135,7 @@ class Transaction:
                 n_inputs -= 1
 
             n_outputs = int.from_bytes(counter.extract(arr, 4), 'big')
-            print('Number of outputs: ', n_inputs)
+            print('Number of outputs: ', n_outputs)
 
             outputs = []
             while n_outputs > 0:

@@ -101,10 +101,13 @@ def main():
     
     node = BlockState(pk, config) 
     
-
-
+    node.data_context.index_chain()
+    txs = node.data_context.get_utxos(node.address)
+    
+    node.create_transaction(5000000, node.address)
     
 
+    # node.verify_transaction, verify_block, ...
 
 
 if __name__=='__main__':

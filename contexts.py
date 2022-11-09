@@ -32,15 +32,18 @@ class DataContext:
         if not os.path.isdir(self.block_store):
             os.mkdir(self.block_store)
         
+        self.index_db = leveldb.LevelDB(os.path.join(self.data_path, 'index'))
+        self.chainstate_db = leveldb.LevelDB(os.path.join(self.data_path, 'chainstate'))
+
         self.address = address
 
         self.current_block_height = 0
         self.current_reward = 5000000000
         self.fee = 50000000
 
-        self.index_db = leveldb.LevelDB(os.path.join(self.data_path, 'index'))
-        self.chainstate_db = leveldb.LevelDB(os.path.join(self.data_path, 'chainstate'))
 
+    def new_block(self, block):
+        pass
 
     def store_block(self, block, index):
         with open(os.path.join(self.block_store, 'blk-%s' % str(index)), 'wb') as f:
@@ -50,30 +53,79 @@ class DataContext:
         with open(os.path.join(self.block_store, 'blk-%s' % str(index)), 'rb') as f:
             return Block.deserialize(f.read())
 
-    def get_utxos(self):
-        pass
-
     def index_chain(self):
         n_blocks = len(os.listdir(self.block_store))
+        self.current_block_height = n_blocks
+
         for i in range(n_blocks):
             block = self.load_block(i+1)
+            
+            block.cleartext_dump()
+            block.txs[0].cleartext_dump()
+
             self.process_block(block, i+1)
-    
+
+        # verification?
+        # self.current_fee...
+        # self.current_reward...
+        # self.current_difficulty...
+
+    def get_utxos(self, address):
+        utxos = self.chainstate_db.Get(address)
+        nbr_of_utxos = len(utxos)//36
+        
+        txs = []
+        for i in range(nbr_of_utxos):
+            utxo = utxos[(36*i):(36*(i+1))]
+
+            tx_hash = utxos[(36*i):(36*i+32)]
+            output_index =  int.from_bytes(utxos[(36*i+32):(36*i+36)],'big')
+            print('Hash & Index: ', tx_hash, output_index)
+
+            block_identifier = self.chainstate_db.Get(utxo)
+            block_hash = block_identifier[0:32]
+            block_index = int.from_bytes(block_identifier[32:36], 'big')
+
+            local_block_index = int.from_bytes(self.index_db.Get(block_hash), 'big')
+            print(local_block_index)
+
+            block = self.load_block(local_block_index)
+            txs.append(block.txs[block_index])
+            
+        return txs
+
+
     def process_block(self, block, index):
         self.index_db.Put(block.header.hash(), index.to_bytes(4, byteorder='big'))
     
-        for tx in block.txs:
-            print('tx: ', tx)
-            print(tx.inputs, tx.outputs)
-            print('Printing inputs...')
-            for iput in tx.inputs:
-                print(iput)
-            print('Printing outputs...') 
-            for oput in tx.outputs:
-                print(oput)
-                #self.chainstate_db()
+        for i, tx in enumerate(block.txs):
+            for j, oput in enumerate(tx.outputs):
+                # For every output - add UTXO to map: address -> utxo (tx-hash + offset) 
+                utxo = tx.hash() + j.to_bytes(4, byteorder='big')
+                address = oput.script
 
-        #self.chainstate_db.Put()
+                try:
+                    utxos = self.chainstate_db.Get(address)
+                    utxos += utxo
+                
+                except KeyError as e:
+                    utxos = utxo
+
+                print('UTXOs corresponding to address: ', utxos)
+                self.chainstate_db.Put(address, utxos)
+
+                # For every utxo - add Block to map: utxo -> block (blockheader-hash + offset)
+                self.chainstate_db.Put(utxo, block.header.hash() + i.to_bytes(4, byteorder='big'))
+                
+
+            for iput in tx.inputs:
+                pub_key = iput.script_sig[-154:]
+                print('This is the pub key (coinbase): ', pub_key)
+                prev_hash = iput.prev_hash
+                prev_index = iput.prev_index
+                print(pub_key, prev_hash, prev_index)
+
+        return 
         
 
 class BlockState:
@@ -175,7 +227,11 @@ class BlockState:
         
         if mode == 'fill':
             value_ = 0
-            sorted_utxos = sorted(self.utxos, key=lambda x: x['value'])
+
+            utxos = self.data_context.get_utxos(self.address)
+            print(utxos)
+
+            sorted_utxos = sorted(utxos, key=lambda x: x['...'])
             
             loop_broken = False
             for i in range(0, len(sorted_utxos)):
