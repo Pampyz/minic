@@ -32,13 +32,15 @@ class Input:
         s = self.prev_hash
         s += self.prev_index.to_bytes(4, byteorder='big')
         if not skip_script:
-            s += bytes(self.script_sig) # Size
+            s_ = bytes(self.script_sig)
+            s += len(s_).to_bytes(4, byteorder='big')  # Size of scriptsig
+            s += s_
         return s
 
     @staticmethod
     def deserialize(arr):
         prev_hash = arr[0:32]
-        prev_index = arr[32:36]
+        prev_index = int.from_bytes(arr[32:36], 'big')
         script_sig = arr[36::]
         return Input(prev_hash, prev_index, script_sig)
 
@@ -85,6 +87,13 @@ class Transaction:
             hash = digest.finalize()
         return hash
 
+    def cleartext_dump(self):
+        print('------ Summarizing transaction ------')
+        print('Number of inputs: ', len(self.inputs))
+        print('Number of outputs: ', len(self.outputs))
+        print('Input hashes, indices and scriptsigs: ', [(i.prev_hash, i.prev_index, i.script_sig)for i in self.inputs])
+        print('Output values and addresses: ', [(o.value, o.script) for o in self.outputs])
+
     def serialize(self, skip_scripts=False):
         s = len(self.inputs).to_bytes(4, byteorder='big') # Should actually be VarINT
         for input in self.inputs:
@@ -97,11 +106,11 @@ class Transaction:
         return s
 
     @staticmethod
-    def deserialize_transactions(arr):
+    def deserialize(arr):
         counter = Counter()
 
         n_transactions = int.from_bytes(counter.extract(arr, 4), 'big')
-        print('Number of transactions in deserialized block: ', n_transactions)
+        print('Deserializing block! Number of transactions in deserialized block: ', n_transactions)
 
         txs = []
         while n_transactions > 0:
@@ -111,13 +120,16 @@ class Transaction:
 
             inputs = []
             while n_inputs > 0:
-                prev_hash = counter.extract(arr, 32)
+                prev_hash = counter.extract(arr, 28)
                 prev_index = counter.extract(arr, 4)
+                prev_index = int.from_bytes(prev_index, byteorder='big')
 
                 script_length_bytes = counter.extract(arr, 4)
                 script_length = int.from_bytes(script_length_bytes, byteorder='big')
+
+                print('Length of script: ', script_length)
                 
-                script_sig = script_length_bytes + counter.extract(arr, script_length)
+                script_sig = counter.extract(arr, script_length)
                 
                 inputs.append(Input(prev_hash, prev_index, script_sig))
                 n_inputs -= 1
@@ -141,7 +153,7 @@ class Transaction:
 
 class BlockHeader:
     def __init__(self, version, previous_block, merkle_root, time, bits, nonce=None):
-        self.version = version # 6 bytes
+        self.version = version # 5 bytes
         self.previous_block = previous_block # Hash
         self.merkle_root = merkle_root # Hash
         self.time = time # 4 bytes / 32 bytes depends on implementation
@@ -158,6 +170,19 @@ class BlockHeader:
         nonce = self.nonce.to_bytes(4, byteorder='big')
 
         return self.version + self.previous_block + self.merkle_root + t + bits + nonce
+
+    @staticmethod
+    def deserialize(arr):
+        version = arr[0:5] # 5 bytes
+        previous_block = arr[5:37] # 32 bytes
+        merkle_root = arr[37:69] # 32 bytes
+        t = int.from_bytes(arr[69:73], 'big') # 4 bytes
+        bits = int.from_bytes(arr[73:105], 'big') # 32 bytes - SHOULD BE 4! Currently difficulty is given in long format.
+        nonce = int.from_bytes(arr[105:109], 'big') # 4 bytes
+
+        header = BlockHeader(version = version, previous_block = previous_block, merkle_root=merkle_root, 
+                            time = t, bits = bits, nonce = nonce)
+        return header
 
     def hash(self):
         hash = self.serialize()
@@ -185,10 +210,10 @@ class Block:
         else:
             tx1 = txs[0:int(round(len(txs)/2))]
             tx2 = txs[int(round(len(txs)/2)):]
-            hash = self.get_merkle_root(tx1) + self.get_merkle_root(tx2)
+            h = self.get_merkle_root(tx1) + self.get_merkle_root(tx2)
 
             sha = hashes.Hash(hashes.SHA256()) ### Might add config functionality here???
-            sha.update(hash)
+            sha.update(h)
             
             return sha.finalize()
 
@@ -202,7 +227,6 @@ class Block:
 
             if hash < self.header.bits:
                 condition = True
-
             else:
                 nonce += 1
         return nonce
@@ -233,26 +257,13 @@ class Block:
         return ser
 
     @staticmethod
-    def deserialize_header(arr):
-        version = arr[0:5] # 5 bytes
-        previous_block = arr[5:37] # 32 bytes
-        merkle_root = arr[37:69] # 32 bytes
-        t = int.from_bytes(arr[69:73], 'big') # 4 bytes
-        bits = int.from_bytes(arr[73:105], 'big') # 32 bytes - SHOULD BE 4! Currently difficulty is given in long format.
-        nonce = int.from_bytes(arr[105:109], 'big') # 4 bytes
-
-        header = BlockHeader(version = version, previous_block = previous_block, merkle_root=merkle_root, 
-                            time = t, bits = bits, nonce = nonce)
-        return header
-
-    @staticmethod
     def deserialize(arr):
         block = Block()
         
-        block.header = Block.deserialize_header(arr)
-        block.txs = Transaction.deserialize_transactions(arr[109:]) 
+        block.header = BlockHeader.deserialize(arr)
+        block.txs = Transaction.deserialize(arr[109:])
+        
         return block
-        # Validate merkle root, hash < difficulty, validate difficulty with blockstate 
 
 class Counter():
     def __init__(self, start=0, end=0):

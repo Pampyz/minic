@@ -1,7 +1,6 @@
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 from blockchain import Block, BlockHeader, Transaction, Input, Output
 
@@ -9,6 +8,18 @@ import leveldb
 import os
 import time
 
+
+def hash(x, mode=None):
+    if mode is None:
+        sha = hashes.Hash(hashes.SHA256())
+        sha.update(x)
+        x = sha.finalize()
+    else:
+        for z in mode:
+            sha = eval('hashes.Hash(hashes.%s())' % z)
+            sha.update(x)
+            x = sha.finalize()
+    return x
 
 class DataContext:
     def __init__(self, config, address):
@@ -49,10 +60,21 @@ class DataContext:
             self.process_block(block, i+1)
     
     def process_block(self, block, index):
-        print(block.header)
         self.index_db.Put(block.header.hash(), index.to_bytes(4, byteorder='big'))
-        
+    
+        for tx in block.txs:
+            print('tx: ', tx)
+            print(tx.inputs, tx.outputs)
+            print('Printing inputs...')
+            for iput in tx.inputs:
+                print(iput)
+            print('Printing outputs...') 
+            for oput in tx.outputs:
+                print(oput)
+                #self.chainstate_db()
 
+        #self.chainstate_db.Put()
+        
 
 class BlockState:
     def __init__(self, pk, config):

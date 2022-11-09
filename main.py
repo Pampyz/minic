@@ -67,17 +67,25 @@ def check_key(config):
             print('Password mismatch! Please try again!')
             quit()
 
-def hash(x, mode=None):
-    if mode is None:
-        sha = hashes.Hash(hashes.SHA256())
-        sha.update(x)
-        x = sha.finalize()
-    else:
-        for z in mode:
-            sha = eval('hashes.Hash(hashes.%s())' % z)
-            sha.update(x)
-            x = sha.finalize()
-    return x
+
+def test_genesis_block(node):
+    ''' put somewhere else later on'''
+    genesis_block = node.create_genesis_block()
+    genesis_block.cleartext_dump()
+    
+    node.data_context.store_block(genesis_block, 1)
+
+    genesis_block_ = node.data_context.load_block(1)
+    genesis_block_.cleartext_dump()
+
+
+    print(genesis_block.txs[0].cleartext_dump(), genesis_block_.txs[0].cleartext_dump())
+    
+    assert genesis_block.header.serialize() == genesis_block_.header.serialize()
+
+    s1 = genesis_block.serialize()
+    s2 = genesis_block_.serialize()
+    assert s1==s2
 
 # Main entry point
 def main():
@@ -89,18 +97,13 @@ def main():
     
     args = parse_args()
     config = parse_config(args.config_path)
-    pk = check_key(config)
+    pk = check_key(config) # Alternatively: node = BlockState(config), node.check_key()
     
-    node = BlockState(pk, config) # Alternatively: node = BlockState(config), node.check_key()
+    node = BlockState(pk, config) 
     
-    tx1 = node.create_coinbase_transaction()
-    
-    node.data_context.index_chain()
 
-    print(tx1)
-    tx2 = node.create_transaction(20, node.address)
-    node.validate_transaction()
 
+    
 
 
 
