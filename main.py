@@ -1,12 +1,12 @@
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives import hashes
-from blockchain import BlockState, DataContext, Block, BlockHeader, Transaction, Input, Output
+from blockchain import Block, BlockHeader, Transaction, Input, Output
+from contexts import BlockState, DataContext
 from tests import test_coinbase_transactions, test_load_and_store
 import argparse
 import yaml
 import os
-import time
 
 # Arguments & configs
 def parse_args():
@@ -92,12 +92,16 @@ def main():
     pk = check_key(config)
     
     node = BlockState(pk, config) # Alternatively: node = BlockState(config), node.check_key()
-    storage = DataContext(config)
-
-    # test_coinbase_transactions(config, node)
-    # test_load_and_store(config, node, storage)
-
     
+    tx1 = node.create_coinbase_transaction()
+    
+    node.data_context.index_chain()
+
+    print(tx1)
+    tx2 = node.create_transaction(20, node.address)
+    node.validate_transaction()
+
+
 
 
 if __name__=='__main__':
