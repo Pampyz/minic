@@ -32,8 +32,8 @@ class DataContext:
         if not os.path.isdir(self.block_store):
             os.mkdir(self.block_store)
         
-        self.index_db = leveldb.LevelDB(os.path.join(self.data_path, 'index'))
-        self.chainstate_db = leveldb.LevelDB(os.path.join(self.data_path, 'chainstate'))
+        self.index_db = leveldb.LevelDB(os.path.join(self.data_path, 'index')) # Hash of block -> index of block on file
+        self.chainstate_db = leveldb.LevelDB(os.path.join(self.data_path, 'chainstate')) # (Address -> utxos) && utxo -> blockheader hash & offset 
 
         self.address = address
 
@@ -71,28 +71,35 @@ class DataContext:
         # self.current_difficulty...
 
     def get_utxos(self, address):
-        utxos = self.chainstate_db.Get(address)
-        nbr_of_utxos = len(utxos)//36
+        serialized_utxos = self.chainstate_db.Get(address) # Serialized representation of all UTXO:s for each address
+        nbr_of_utxos = len(serialized_utxos)//36 # Length of each UTXO representation: 36 bytes
         
-        txs = []
+        utxos = []
         for i in range(nbr_of_utxos):
-            utxo = utxos[(36*i):(36*(i+1))]
-
-            tx_hash = utxos[(36*i):(36*i+32)]
-            output_index =  int.from_bytes(utxos[(36*i+32):(36*i+36)],'big')
-            print('Hash & Index: ', tx_hash, output_index)
-
-            block_identifier = self.chainstate_db.Get(utxo)
-            block_hash = block_identifier[0:32]
-            block_index = int.from_bytes(block_identifier[32:36], 'big')
-
-            local_block_index = int.from_bytes(self.index_db.Get(block_hash), 'big')
-            print(local_block_index)
-
-            block = self.load_block(local_block_index)
-            txs.append(block.txs[block_index])
+            utxo = serialized_utxos[(36*i):(36*(i+1))] # Extract serialized representation of one utxo
             
-        return txs
+            tx_hash = utxo[0:32]
+            output_index = int.from_bytes(utxo[32:26],'big')
+            print('Reference: ', [tx_hash, output_index])
+
+            tx = self.get_transaction_from_utxo(utxo)
+        
+            utxos.append({'hash': tx_hash, 
+                            'index': output_index, 
+                                'value': tx.outputs[output_index].value})
+
+        return utxos
+
+    def get_transaction_from_utxo(self, utxo):
+        block_identifier = self.chainstate_db.Get(utxo) # In what block is the utxo? Block_identifier - hash + index of transaction
+        block_hash = block_identifier[0:32]
+        transaction_index = int.from_bytes(block_identifier[32:36], 'big')
+
+        local_block_index = int.from_bytes(self.index_db.Get(block_hash), 'big')
+        block = self.load_block(local_block_index)
+
+        tx = block.txs[transaction_index]
+        return tx
 
 
     def process_block(self, block, index):
@@ -204,7 +211,7 @@ class BlockState:
             with a byte-representation of the public key of the signer. '''
 
         sig = self.pk.sign(
-            tx.__hash__(skip_scripts=True), 
+            tx.hash(skip_scripts=True), 
             ec.ECDSA(hashes.SHA256())
         ) # DER-encoding seems to have variable length - see https://stackoverflow.com/questions/17269238/ecdsa-signature-length
         
@@ -219,41 +226,41 @@ class BlockState:
         print(len(sig), len(pub_key))
         return sig_length + sig + pub_key
 
+    def build_transaction_smallest_first(self, value, tx):
+        value_ = 0
+
+        utxos = self.data_context.get_utxos(self.address)
+        sorted_utxos = sorted(utxos, key=lambda x: x['value'])
+
+        loop_broken = False
+        for i in range(0, len(sorted_utxos)):
+            utxo = sorted_utxos[i]
+
+            value_ += utxo['value'] 
+            tx.add_input(Input(utxo['hash'], utxo['index'], None))
+
+            if value_ > value:
+                loop_broken = True
+                break
+
+        if not loop_broken:
+            print('Transaction too big! Insufficient funds.')
+            return None
+
+        return tx, value_
+
     ''' Fee is included in value! '''
-    def create_transaction(self, value, receiver, mode='fill'):
+    def create_transaction(self, value, fee, receiver, mode='smallest_first'):
         tx = Transaction()
 
         # Start by constructing inputs made from available UTXO
-        
-        if mode == 'fill':
-            value_ = 0
-
-            utxos = self.data_context.get_utxos(self.address)
-            print(utxos)
-
-            sorted_utxos = sorted(utxos, key=lambda x: x['...'])
-            
-            loop_broken = False
-            for i in range(0, len(sorted_utxos)):
-                utxo = sorted_utxos[i]
-
-                value_ += utxo['value'] 
-                tx.add_input(Input(utxo['prev_hash'], utxo['prev_index'], None))
-
-                if value_ > value:
-                    loop_broken = True
-                    break
-
-            if not loop_broken:
-                print('Transaction too big! Insufficient funds.')
-                return
-
-        elif mode =='biggest_first':
-            pass
+        if mode == 'smallest_first':
+            tx, value_ = self.build_transaction_smallest_first(value+fee, tx)
 
         # Create output to receiver address, send change to own address
-        tx.add_output(Output(value-self.fee, receiver))
-        tx.add_output(Output(value_-value, self.address))
+
+        tx.add_output(Output(value, receiver)) # Send value to receiver
+        tx.add_output(Output(value_-(value + fee), self.address)) # Send change back to us (sum of inputs minus sent & fee)
         
         # Finally add signatures to inputs
         script_sig = self.get_script_sig(tx)

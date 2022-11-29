@@ -103,11 +103,11 @@ def main():
     
     node.data_context.index_chain()
     txs = node.data_context.get_utxos(node.address)
-    
-    node.create_transaction(5000000, node.address)
-    
+    print('UTXO:s from adress: ', node.address)
+    print(txs)
 
-    # node.verify_transaction, verify_block, ...
+    tx = node.create_transaction(5000000, 50000, node.address)
+    print(tx.inputs, tx.outputs)
 
 
 if __name__=='__main__':
